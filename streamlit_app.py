@@ -50,10 +50,5 @@ with st.sidebar:
     st.markdown("---")
 
 
-st.title("Caddy")
-st.write(
-    "Caddy.ai – Live Focus Score."
-)
-
 # x = st.slider("Select a value")
 # st.write(x, "squared is", x * x)

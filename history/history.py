@@ -2,6 +2,10 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from utils import render_page_title
+
+
+render_page_title()  
 
 
 df = pd.DataFrame({
@@ -29,4 +33,4 @@ for i in range(1, 10):
 
 progress_bar.empty()
 
-# st.button("Re-run")
+st.button("Re-run")
