@@ -22,8 +22,7 @@ dash = st.Page(login_logout, title="Start", icon=":material/login:")
 # end_page = st.Page(logout, title="End", icon=":material/logout:")
 
 dashboard = st.Page(
-    "current/page1.py", title="Dashboard", icon=":material/dashboard:", default=True
-)
+    "current/eegplot.py", title="Dashboard", icon=":material/dashboard:")
 plots = st.Page("current/plots.py", title="Plots", icon=":material/clock_loader_20:")
 
 search = st.Page("history/search.py", title="Search", icon=":material/search:")
