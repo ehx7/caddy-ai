@@ -1,0 +1,226 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import altair as alt
+
+import streamlit as st
+from streamlit_autorefresh import st_autorefresh
+import time
+import random
+from datetime import datetime, timedelta
+import pandas as pd
+#from focus import get_mindfulness_score, setup_board
+import streamlit as st
+import time
+import numpy as np
+
+from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
+from brainflow.data_filter import DataFilter
+from brainflow.ml_model import MLModel, BrainFlowMetrics, BrainFlowClassifiers, BrainFlowModelParams
+
+
+def setup_board():
+    BoardShim.enable_dev_board_logger()
+    params = BrainFlowInputParams()
+    params.serial_port = '/dev/cu.usbserial-D200QSOE'  # Change if needed
+    board_id = BoardIds.CYTON_BOARD.value
+    board = BoardShim(board_id, params)
+    board.prepare_session()
+    board.start_stream()
+    eeg_channels = BoardShim.get_eeg_channels(board_id)
+    sampling_rate = BoardShim.get_sampling_rate(board_id)
+    return board, board_id, eeg_channels, sampling_rate
+
+
+def get_mindfulness_score(data, eeg_channels, sampling_rate):
+    bands = DataFilter.get_avg_band_powers(data, eeg_channels, sampling_rate, apply_filter=True)
+    feature_vector = bands[0]
+    mindfulness_params = BrainFlowModelParams(BrainFlowMetrics.MINDFULNESS.value,
+                                              BrainFlowClassifiers.DEFAULT_CLASSIFIER.value)
+    mindfulness = MLModel(mindfulness_params)
+    mindfulness.prepare()
+    score = mindfulness.predict(feature_vector)
+    mindfulness.release()
+    return score
+# 🔧 Set up page and refresh
+st.set_page_config(page_title="Caddy.ai", layout="centered")
+st_autorefresh(interval=1000, key="focus_refresh")
+
+# # 🧠 Session state setup
+# if "putt_log" not in st.session_state:
+#     st.session_state.putt_log = []
+# if "focus_log" not in st.session_state:
+#     st.session_state.focus_log = []
+# if "visible_focus_log" not in st.session_state:
+#     st.session_state.visible_focus_log = []
+
+# 📊 Simulate focus score + timestamp
+# focus_score = round(random.uniform(1.5, 4.5), 2)
+#focus_score = get_mindfulness_score(data, eeg_channels, sampling_rate)
+
+
+focus_score = 0
+# Run tracking loop
+#if st.session_state.running:
+board, board_id, eeg_channels, sampling_rate = setup_board()
+
+window_duration = 10  # seconds of data per calculation
+refresh_interval = 5  # seconds between updates
+buffer_size = sampling_rate * window_duration
+
+st.success("Tracking started. Live mindfulness scores below.")
+
+time.sleep(refresh_interval)
+data = board.get_current_board_data(buffer_size)
+score = get_mindfulness_score(data, eeg_channels, sampling_rate)
+focus_score = score
+st.session_state.scores.append(score)
+#score_chart.add_rows([[score]])
+st.write(f"Latest Mindfulness Score: **{score:.2f}**")
+st.write("hi")
+    #st.write(score)
+
+    # except Exception as e:
+    #     st.error(f"Error: {e}")
+    # finally:
+    #     board.stop_stream()
+    #     board.release_session()
+    #     st.success("Tracking stopped.")
+
+
+timestamp = datetime.now().isoformat()
+
+# Log every score internally
+# st.session_state.focus_log.append({
+#     "timestamp": timestamp,
+#     "focus": score
+# })
+
+# Log only displayed scores to separate list
+# st.session_state.visible_focus_log.append({
+#     "timestamp": timestamp,
+#     "focus": focus_score
+# })
+
+# 🧠 UI display
+st.title("⛳ Caddy.ai – Live Focus Score + Shot Logger")
+st.metric("🧠 Focus Score", focus_score)
+st.session_state.latest_focus = focus_score
+
+if focus_score < 2.2:
+    st.error("🔴 Nudge Triggered: Take a Breath")
+else:
+    st.success("🟢 Focus is Stable")
+
+# 🖱️ Putt logging buttons
+col1, col2 = st.columns(2)
+
+def log_putt(result_label):
+    putt_time = datetime.now()
+
+    # Last putt time or fallback to session start
+    if st.session_state.putt_log:
+        last_putt_time = datetime.fromisoformat(st.session_state.putt_log[-1]["timestamp"])
+    else:
+        last_putt_time = datetime.fromisoformat(st.session_state.focus_log[0]["timestamp"])
+
+    # ✅ NEW: Only check visible (displayed) values for nudge logic
+    nudge_during_window = any(
+        last_putt_time <= datetime.fromisoformat(entry["timestamp"]) <= putt_time
+        and entry["focus"] < 2.2
+        for entry in st.session_state.visible_focus_log
+    )
+
+    # ⏱ Check last 10 seconds for low focus
+    ten_sec_window = putt_time - timedelta(seconds=10)
+    low_focus_last_10s = any(
+        datetime.fromisoformat(entry["timestamp"]) >= ten_sec_window and entry["focus"] < 2.2
+        for entry in st.session_state.focus_log
+    )
+
+    # 🧠 Check if most recent score before putt was low
+    last_focus_entry = None
+    for entry in reversed(st.session_state.focus_log):
+        if datetime.fromisoformat(entry["timestamp"]) < putt_time:
+            last_focus_entry = entry
+            break
+    low_focus_last = last_focus_entry is not None and last_focus_entry["focus"] < 2.2
+
+    # 📝 Log it
+    st.session_state.putt_log.append({
+        "timestamp": putt_time.isoformat(),
+        "focus": focus_score,
+        "result": result_label,
+        "nudge": nudge_during_window,
+        "low_focus_last_10s": low_focus_last_10s,
+        "low_focus_last": low_focus_last
+    })
+
+if col1.button("✅ Made Putt"):
+    log_putt("made")
+
+if col2.button("❌ Missed Putt"):
+    log_putt("miss")
+
+# 📋 Show shot log
+st.subheader("🗃️ Shot Log")
+if st.session_state.putt_log:
+    df = pd.DataFrame(st.session_state.putt_log)
+    st.dataframe(df)
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button("📥 Download CSV", csv, "putt_log.csv", "text/csv")
+else:
+    st.info("No shots logged yet.")
+
+
+
+
+
+
+# if "start" not in st.session_state:
+#     st.session_state.start = False
+
+# def login_logout():
+#     if not st.session_state.start:
+#         if st.button("Start"):
+#             st.session_state.start = True
+#             st.rerun()
+#     else:
+#         st.success("Session is active.")
+#         if st.button("End"):
+#             st.session_state.start = False
+#             st.rerun()
+
+# dash = st.Page(login_logout, title="Start", icon=":material/login:")
+# # end_page = st.Page(logout, title="End", icon=":material/logout:")
+
+# dashboard = st.Page(
+#     "current/eegplot.py", title="Dashboard", icon=":material/dashboard:")
+# plots = st.Page("current/plots.py", title="Plots", icon=":material/clock_loader_20:")
+
+# search = st.Page("history/search.py", title="Search", icon=":material/search:")
+# history = st.Page("current/focus.py", title="History", icon=":material/history:")
+
+
+# if st.session_state.start:
+#     pg = st.navigation(
+#         {
+#             "Account": [dash],
+#             "Reports": [dashboard, plots],
+#             "Tools": [search, history],
+#         }
+#     )
+# else:
+#     pg = st.navigation({"Account": [dash])
+
+# pg.run()
+
+# # sidebar header
+# with st.sidebar:
+#     st.markdown("## 🏌️‍♂️ Caddy")
+#     st.markdown("**Caddy.ai – Live Focus Score**")
+#     st.markdown("---")
+
+
+# # # x = st.slider("Select a value")
+# # # st.write(x, "squared is", x * x)

@@ -15,7 +15,9 @@ def setup_board():
     board = BoardShim(board_id, params)
     board.prepare_session()
     board.start_stream()
-    return board, board_id
+    eeg_channels = BoardShim.get_eeg_channels(board_id)
+    sampling_rate = BoardShim.get_sampling_rate(board_id)
+    return board, board_id, eeg_channels, sampling_rate
 
 
 def get_mindfulness_score(data, eeg_channels, sampling_rate):
@@ -68,9 +70,12 @@ if st.session_state.running:
             st.session_state.scores.append(score)
             score_chart.add_rows([[score]])
             st.write(f"Latest Mindfulness Score: **{score:.2f}**")
+            st.write(score)
+
     except Exception as e:
         st.error(f"Error: {e}")
     finally:
         board.stop_stream()
         board.release_session()
         st.success("Tracking stopped.")
+

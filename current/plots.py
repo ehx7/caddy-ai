@@ -4,6 +4,7 @@ import time
 import random
 from datetime import datetime, timedelta
 import pandas as pd
+from focus import get_mindfulness_score, setup_board
 
 # 🔧 Set up page and refresh
 st.set_page_config(page_title="Caddy.ai", layout="centered")
@@ -18,7 +19,40 @@ if "visible_focus_log" not in st.session_state:
     st.session_state.visible_focus_log = []
 
 # 📊 Simulate focus score + timestamp
-focus_score = round(random.uniform(1.5, 4.5), 2)
+# focus_score = round(random.uniform(1.5, 4.5), 2)
+#focus_score = get_mindfulness_score(data, eeg_channels, sampling_rate)
+
+
+
+# Run tracking loop
+if st.session_state.running:
+    board, board_id, eeg_channels, sampling_rate = setup_board()
+    
+    window_duration = 10  # seconds of data per calculation
+    refresh_interval = 5  # seconds between updates
+    buffer_size = sampling_rate * window_duration
+
+    st.success("Tracking started. Live mindfulness scores below.")
+
+    try:
+        while st.session_state.running:
+            time.sleep(refresh_interval)
+            data = board.get_current_board_data(buffer_size)
+            score = get_mindfulness_score(data, eeg_channels, sampling_rate)
+            focus_score = score
+            st.session_state.scores.append(score)
+            #score_chart.add_rows([[score]])
+            st.write(f"Latest Mindfulness Score: **{score:.2f}**")
+            #st.write(score)
+
+    except Exception as e:
+        st.error(f"Error: {e}")
+    finally:
+        board.stop_stream()
+        board.release_session()
+        st.success("Tracking stopped.")
+
+
 timestamp = datetime.now().isoformat()
 
 # Log every score internally
