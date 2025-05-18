@@ -98,6 +98,38 @@ def toggle_session():
             st.session_state.session_summary = session_data
             st.session_state.start_time = None
         st.rerun()
+def draw_focus_trend(focus_log, putt_log):
+    if len(focus_log) > 1:
+        focus_df = pd.DataFrame(focus_log)
+        focus_df["timestamp"] = pd.to_datetime(focus_df["timestamp"])
+        focus_df["event"] = ""
+        focus_df["color"] = "purple"
+
+        for putt in putt_log:
+            t = pd.to_datetime(putt["timestamp"])
+            closest_idx = focus_df["timestamp"].sub(t).abs().idxmin()
+            if putt["nudge"]:
+                focus_df.loc[closest_idx, ["event", "color"]] = ["Nudge", "yellow"]
+            elif putt["result"] == "made":
+                focus_df.loc[closest_idx, ["event", "color"]] = ["Made", "green"]
+            elif putt["result"] == "miss":
+                focus_df.loc[closest_idx, ["event", "color"]] = ["Miss", "red"]
+
+        base = alt.Chart(focus_df).mark_line().encode(
+            x="timestamp:T",
+            y="focus:Q"
+        )
+
+        points = alt.Chart(focus_df).mark_circle(size=60).encode(
+            x="timestamp:T",
+            y="focus:Q",
+            color=alt.Color("color", scale=None),
+            tooltip=["timestamp:T", "focus:Q", "event"]
+        ).transform_filter("datum.event != ''")
+
+        st.altair_chart(base + points, use_container_width=True)
+    else:
+        st.info("Focus trend will appear after a few updates.")
 
 
 # --- Pages ---
@@ -125,37 +157,39 @@ def home():
 
         # --- Focus Trend Chart with Annotations ---
         st.subheader("📈 Focus Trend")
-        if len(st.session_state.focus_log) > 1:
-            focus_df = pd.DataFrame(st.session_state.focus_log)
-            focus_df["timestamp"] = pd.to_datetime(focus_df["timestamp"])
-            focus_df["event"] = ""
-            focus_df["color"] = "purple"
+        # if len(st.session_state.focus_log) > 1:
+        #     focus_df = pd.DataFrame(st.session_state.focus_log)
+        #     focus_df["timestamp"] = pd.to_datetime(focus_df["timestamp"])
+        #     focus_df["event"] = ""
+        #     focus_df["color"] = "purple"
 
-            for putt in st.session_state.putt_log:
-                t = pd.to_datetime(putt["timestamp"])
-                closest_idx = focus_df["timestamp"].sub(t).abs().idxmin()
-                if putt["nudge"]:
-                    focus_df.loc[closest_idx, ["event", "color"]] = ["Nudge", "yellow"]
-                elif putt["result"] == "made":
-                    focus_df.loc[closest_idx, ["event", "color"]] = ["Made", "green"]
-                elif putt["result"] == "miss":
-                    focus_df.loc[closest_idx, ["event", "color"]] = ["Miss", "red"]
+        #     for putt in st.session_state.putt_log:
+        #         t = pd.to_datetime(putt["timestamp"])
+        #         closest_idx = focus_df["timestamp"].sub(t).abs().idxmin()
+        #         if putt["nudge"]:
+        #             focus_df.loc[closest_idx, ["event", "color"]] = ["Nudge", "yellow"]
+        #         elif putt["result"] == "made":
+        #             focus_df.loc[closest_idx, ["event", "color"]] = ["Made", "green"]
+        #         elif putt["result"] == "miss":
+        #             focus_df.loc[closest_idx, ["event", "color"]] = ["Miss", "red"]
 
-            base = alt.Chart(focus_df).mark_line().encode(
-                x="timestamp:T",
-                y="focus:Q"
-            )
+        #     base = alt.Chart(focus_df).mark_line().encode(
+        #         x="timestamp:T",
+        #         y="focus:Q"
+        #     )
 
-            points = alt.Chart(focus_df).mark_circle(size=60).encode(
-                x="timestamp:T",
-                y="focus:Q",
-                color=alt.Color("color", scale=None),
-                tooltip=["timestamp:T", "focus:Q", "event"]
-            ).transform_filter("datum.event != ''")
+        #     points = alt.Chart(focus_df).mark_circle(size=60).encode(
+        #         x="timestamp:T",
+        #         y="focus:Q",
+        #         color=alt.Color("color", scale=None),
+        #         tooltip=["timestamp:T", "focus:Q", "event"]
+        #     ).transform_filter("datum.event != ''")
 
-            st.altair_chart(base + points, use_container_width=True)
-        else:
-            st.info("Focus trend will appear after a few updates.")
+        #     st.altair_chart(base + points, use_container_width=True)
+        # else:
+        #     st.info("Focus trend will appear after a few updates.")
+        
+        draw_focus_trend(st.session_state.focus_log, st.session_state.putt_log)
 
         # --- Putt Logging ---
         col1, col2 = st.columns(2)
@@ -236,7 +270,7 @@ def session_page():
 
 def history_page():
     st.title("📜 Session History")
-
+    
     if not st.session_state.history:
         st.info("No sessions recorded yet.")
     else:
@@ -254,6 +288,11 @@ def history_page():
                     st.write("Putt Log")
                     st.dataframe(pd.DataFrame(session["putt_log"]))
 
+                # 🧠 Insert the Focus Trend Graph here
+                if session["focus_log"]:
+                    st.markdown("### 📈 Focus Trend")
+                    draw_focus_trend(session["focus_log"], session["putt_log"] if session["putt_log"] else [])
+
         if st.button("🗑️ Clear History"):
             st.session_state.history = []
             st.session_state.focus_log = []
@@ -263,6 +302,8 @@ def history_page():
             st.success("Session history cleared.")
             st.rerun()
 
+
+    
 
 # --- Navigation ---
 st.sidebar.title("🏌️‍♂️ Navigation")
