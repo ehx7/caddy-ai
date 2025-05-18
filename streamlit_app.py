@@ -135,7 +135,7 @@ def draw_focus_trend(focus_log, putt_log):
 # --- Pages ---
 def home():
     st.title("⛳ Caddy.ai")
-    st.write("Welcome to the Focus Timer")
+    st.write(": your mental performance coach")
     toggle_session()
     show_timer()
 
@@ -151,7 +151,7 @@ def home():
 
         # Display nudges
         if focus_score < 2.2:
-            st.error("🔴 Nudge Triggered: Take a Breath")
+            st.warning("🔴 Nudge Triggered: Take a Breath")
         else:
             st.success("🟢 Focus is Stable")
 
