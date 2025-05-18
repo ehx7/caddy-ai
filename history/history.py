@@ -2,10 +2,28 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from utils import render_page_title
 
 
-render_page_title()  
+
+def session_history():
+    st.title("Session History")
+
+    if st.session_state.sessions:
+        session_data = []
+        for i, seconds in enumerate(st.session_state.sessions, 1):
+            h, r = divmod(seconds, 3600)
+            m, s = divmod(r, 60)
+            session_data.append({
+                "Session": f"Session {i}",
+                "Duration": f"{h:02}:{m:02}:{s:02}"
+            })
+
+        df = pd.DataFrame(session_data)
+        st.table(df)
+    else:
+        st.info("No sessions recorded yet.")
+
+
 
 
 df = pd.DataFrame({

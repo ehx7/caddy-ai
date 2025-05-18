@@ -1,127 +1,276 @@
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
-import serial.tools.list_ports
-from datetime import datetime
 import pandas as pd
+import time
+from datetime import datetime, timedelta
+from streamlit_autorefresh import st_autorefresh
+import random
+import altair as alt
 
-from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
-from brainflow.data_filter import DataFilter
-from brainflow.ml_model import MLModel, BrainFlowMetrics, BrainFlowClassifiers, BrainFlowModelParams
+# Auto-refresh every second
+st_autorefresh(interval=2000, key="focus_refresh")
 
-# Serial Port Detection
-def list_serial_ports():
-    ports = serial.tools.list_ports.comports()
-    return [(port.device, f"{port.device} - {port.description}") for port in ports]
+# --- Initialize session state ---
+if "start" not in st.session_state:
+    st.session_state.start = False
+if "start_time" not in st.session_state:
+    st.session_state.start_time = None
+if "history" not in st.session_state:
+    st.session_state.history = []
+if "focus_log" not in st.session_state:
+    st.session_state.focus_log = []
+if "putt_log" not in st.session_state:
+    st.session_state.putt_log = []
+if "visible_focus_log" not in st.session_state:
+    st.session_state.visible_focus_log = []
+if "latest_focus" not in st.session_state:
+    st.session_state.latest_focus = None
+if "session_summary" not in st.session_state:
+    st.session_state.session_summary = None
 
-# EEG Setup
-def setup_board(selected_port):
-    BoardShim.enable_dev_board_logger()
-    params = BrainFlowInputParams()
-    params.serial_port = selected_port
-    board_id = BoardIds.CYTON_BOARD.value
-    board = BoardShim(board_id, params)
-    board.prepare_session()
-    board.start_stream()
-    eeg_channels = BoardShim.get_eeg_channels(board_id)
-    sampling_rate = BoardShim.get_sampling_rate(board_id)
-    return board, board_id, eeg_channels, sampling_rate
+# --- Timer display ---
+def show_timer():
+    if st.session_state.start and st.session_state.start_time:
+        elapsed = int(time.time() - st.session_state.start_time)
+        h, r = divmod(elapsed, 3600)
+        m, s = divmod(r, 60)
+        st.write(f"⏱️ Elapsed Time: {h:02}:{m:02}:{s:02}")
 
-# Mindfulness Calculation
-def get_mindfulness_score(data, eeg_channels, sampling_rate):
-    bands = DataFilter.get_avg_band_powers(data, eeg_channels, sampling_rate, apply_filter=True)
-    feature_vector = bands[0]
-    mindfulness_params = BrainFlowModelParams(BrainFlowMetrics.MINDFULNESS,
-                                              BrainFlowClassifiers.DEFAULT_CLASSIFIER)
-    mindfulness = MLModel(mindfulness_params)
-    mindfulness.prepare()
-    score = mindfulness.predict(feature_vector)
-    mindfulness.release()
-    return score
+# --- Log Putt Function ---
+def log_putt(result_label):
+    putt_time = datetime.now()
+    last_putt_time = datetime.fromisoformat(st.session_state.putt_log[-1]["timestamp"]) if st.session_state.putt_log else datetime.fromisoformat(st.session_state.focus_log[0]["timestamp"])
 
-# Streamlit Page Config
-st.set_page_config(page_title="Caddy.ai", layout="centered")
-st.title("⛳ Caddy.ai – Live Focus Score + Real-time Plot")
+    # Nudge occurred between last putt and now
+    nudge_during_window = any(
+        last_putt_time <= datetime.fromisoformat(entry["timestamp"]) <= putt_time and entry["focus"] < 2.2
+        for entry in st.session_state.visible_focus_log
+    )
 
-# Serial Port Selector UI
-st.sidebar.title("🔌 EEG Board Setup")
-available_ports = list_serial_ports()
+    # Any low focus in last 10s
+    ten_sec_window = putt_time - timedelta(seconds=10)
+    low_focus_last_10s = any(
+        datetime.fromisoformat(entry["timestamp"]) >= ten_sec_window and entry["focus"] < 2.2
+        for entry in st.session_state.focus_log
+    )
 
-if not available_ports:
-    st.sidebar.error("No serial ports found. Plug in your Cyton dongle.")
-    st.stop()
+    # Was the last focus entry before this one also low?
+    last_focus_entry = next(
+        (entry for entry in reversed(st.session_state.focus_log)
+         if datetime.fromisoformat(entry["timestamp"]) < putt_time), None
+    )
+    low_focus_last = last_focus_entry is not None and last_focus_entry["focus"] < 2.2
 
-port_options = [label for _, label in available_ports]
-label_to_port = {label: device for device, label in available_ports}
-selected_label = st.sidebar.selectbox("Select Serial Port", port_options)
-selected_port = label_to_port[selected_label]
-st.sidebar.success(f"Using: {selected_port}")
+    # Log it
+    st.session_state.putt_log.append({
+        "timestamp": putt_time.isoformat(),
+        "focus": st.session_state.latest_focus,
+        "result": result_label,
+        "nudge": nudge_during_window,
+        "low_focus_last_10s": low_focus_last_10s,
+        "low_focus_last": low_focus_last
+    })
 
-# Sidebar header
-with st.sidebar:
-    st.markdown("## 🏌️‍♂️ Caddy")
-    st.markdown("**Caddy.ai – Live Focus Score**")
-    st.markdown("---")
+# --- Start/End Session Toggle ---
+def toggle_session():
+    if st.button("Start" if not st.session_state.start else "End"):
+        st.session_state.start = not st.session_state.start
 
-# Initialize session state for board and data if not present
-if "board" not in st.session_state:
-    try:
-        board, board_id, eeg_channels, sampling_rate = setup_board(selected_port)
-        st.session_state.board = board
-        st.session_state.board_id = board_id
-        st.session_state.eeg_channels = eeg_channels
-        st.session_state.sampling_rate = sampling_rate
-        st.session_state.scores = []
-        st.session_state.timestamps = []
-        st.success("EEG board connected successfully!")
-    except Exception as e:
-        st.error(f"Failed to initialize board: {e}")
-        st.stop()
-else:
-    board = st.session_state.board
-    board_id = st.session_state.board_id
-    eeg_channels = st.session_state.eeg_channels
-    sampling_rate = st.session_state.sampling_rate
+        if st.session_state.start:
+            st.session_state.start_time = time.time()
+            st.session_state.focus_log = []
+            st.session_state.putt_log = []
+            st.session_state.visible_focus_log = []
+            st.session_state.session_summary = None
+        else:
+            end_time = time.time()
+            elapsed = int(end_time - st.session_state.start_time)
+            duration = str(timedelta(seconds=elapsed))
 
-# Autorefresh every 5 seconds
-st_autorefresh(interval=5000, key="datarefresh")
+            session_data = {
+                "start": datetime.fromtimestamp(st.session_state.start_time).strftime("%Y-%m-%d %H:%M:%S"),
+                "end": datetime.fromtimestamp(end_time).strftime("%Y-%m-%d %H:%M:%S"),
+                "duration": duration,
+                "focus_log": st.session_state.focus_log.copy(),
+                "putt_log": st.session_state.putt_log.copy(),
+            }
 
-try:
-    window_duration = 10  # seconds of data per calculation
-    buffer_size = sampling_rate * window_duration
+            st.session_state.history.append(session_data)
+            st.session_state.session_summary = session_data
+            st.session_state.start_time = None
+        st.rerun()
 
-    # Get latest EEG data and calculate score
-    data = board.get_current_board_data(buffer_size)
-    score = get_mindfulness_score(data, eeg_channels, sampling_rate)
 
-    # Append new score + timestamp
-    st.session_state.scores.append(score)
-    st.session_state.timestamps.append(datetime.now())
+# --- Pages ---
+def home():
+    st.title("⛳ Caddy.ai")
+    st.write("Welcome to the Focus Timer")
+    toggle_session()
+    show_timer()
 
-    # Display current score
-    st.metric("🧠 Focus Score", f"{score:.2f}")
+    if st.session_state.start:
+        # Simulate a focus score
+        focus_score = round(random.uniform(1.5, 4.5), 2)
+        timestamp = datetime.now().isoformat()
+        st.session_state.latest_focus = focus_score
+        st.metric("🧠 Focus Score", focus_score)
 
-    # Plot the score history as a line chart
-    df_scores = pd.DataFrame({
-        "Time": st.session_state.timestamps,
-        "Focus Score": st.session_state.scores
-    }).set_index("Time")
+        st.session_state.focus_log.append({"timestamp": timestamp, "focus": focus_score})
+        st.session_state.visible_focus_log.append({"timestamp": timestamp, "focus": focus_score})
 
-    st.line_chart(df_scores)
+        # Display nudges
+        if focus_score < 2.2:
+            st.error("🔴 Nudge Triggered: Take a Breath")
+        else:
+            st.success("🟢 Focus is Stable")
 
-    if score < 2.2:
-        st.error("🔴 Nudge: Take a breath.")
+        # --- Focus Trend Chart with Annotations ---
+        st.subheader("📈 Focus Trend")
+        if len(st.session_state.focus_log) > 1:
+            focus_df = pd.DataFrame(st.session_state.focus_log)
+            focus_df["timestamp"] = pd.to_datetime(focus_df["timestamp"])
+            focus_df["event"] = ""
+            focus_df["color"] = "purple"
+
+            for putt in st.session_state.putt_log:
+                t = pd.to_datetime(putt["timestamp"])
+                closest_idx = focus_df["timestamp"].sub(t).abs().idxmin()
+                if putt["nudge"]:
+                    focus_df.loc[closest_idx, ["event", "color"]] = ["Nudge", "yellow"]
+                elif putt["result"] == "made":
+                    focus_df.loc[closest_idx, ["event", "color"]] = ["Made", "green"]
+                elif putt["result"] == "miss":
+                    focus_df.loc[closest_idx, ["event", "color"]] = ["Miss", "red"]
+
+            base = alt.Chart(focus_df).mark_line().encode(
+                x="timestamp:T",
+                y="focus:Q"
+            )
+
+            points = alt.Chart(focus_df).mark_circle(size=60).encode(
+                x="timestamp:T",
+                y="focus:Q",
+                color=alt.Color("color", scale=None),
+                tooltip=["timestamp:T", "focus:Q", "event"]
+            ).transform_filter("datum.event != ''")
+
+            st.altair_chart(base + points, use_container_width=True)
+        else:
+            st.info("Focus trend will appear after a few updates.")
+
+        # --- Putt Logging ---
+        col1, col2 = st.columns(2)
+        if col1.button("✅ Made Putt"):
+            log_putt("made")
+        if col2.button("❌ Missed Putt"):
+            log_putt("miss")
+
+        # --- Putt Log Display ---
+        st.subheader("Shot Log")
+        if st.session_state.putt_log:
+            df = pd.DataFrame(st.session_state.putt_log)
+            st.dataframe(df)
+            #csv = df.to_csv(index=False).encode("utf-8")
+            #st.download_button("📥 Download CSV", csv, "putt_log.csv", "text/csv")
+        else:
+            st.info("No shots logged yet.")
+
+    elif st.session_state.session_summary:
+        st.markdown("---")
+        st.subheader("🧾 Session Summary")
+        summary = st.session_state.session_summary
+        st.write(f"**Start:** {summary['start']}")
+        st.write(f"**End:** {summary['end']}")
+        st.write(f"**Duration:** {summary['duration']}")
+        st.write("**Focus Readings:**", len(summary["focus_log"]))
+        st.write("**Putts:**", len(summary["putt_log"]))
+
+def session_page():
+    st.title("Session Recap")
+    if not st.session_state.history:
+            st.info("No putts have been logged yet.")
+
+
+    if not st.session_state.start and st.session_state.start_time is None and st.session_state.focus_log:
+
+        # 1. Putt Outcomes Pie Chart
+        st.subheader("🏌️‍♂️ Putt Outcomes")
+        if st.session_state.putt_log:
+            putt_df = pd.DataFrame(st.session_state.putt_log)
+            pie_data = putt_df["result"].value_counts().reset_index()
+            pie_data.columns = ["Result", "Count"]
+            st.altair_chart(
+                alt.Chart(pie_data).mark_arc().encode(
+                    theta=alt.Theta(field="Count", type="quantitative"),
+                    color=alt.Color(field="Result", type="nominal"),
+                    tooltip=["Result", "Count"]
+                ),
+                use_container_width=True
+            )
+        
+
+        # 2. Nudges Count
+        st.markdown("---")
+        st.subheader("⚠️ Nudges Triggered")
+        nudge_count = sum(p["nudge"] for p in st.session_state.putt_log)
+        st.metric("Total Nudges", nudge_count)
+
+        # 3. Focus Score Distribution Histogram
+        st.subheader("📶 Focus Score Distribution")
+        focus_df = pd.DataFrame(st.session_state.focus_log)
+        st.altair_chart(
+            alt.Chart(focus_df).mark_bar().encode(
+                alt.X("focus:Q", bin=True, title="Focus Score"),
+                y='count()',
+            ),
+            use_container_width=True
+        )
+
+        # 4. Session Duration Summary
+        if st.session_state.history:
+            st.markdown("---")
+            last_session = st.session_state.history[-1]
+            st.subheader("⏱️ Session Duration")
+            st.write(f"Start: {last_session['start']}\n\nEnd: {last_session['end']}\n\nDuration: {last_session['duration']}")
+
+        
+
+def history_page():
+    st.title("📜 Session History")
+
+    if not st.session_state.history:
+        st.info("No sessions recorded yet.")
     else:
-        st.success("🟢 Focus is stable.")
+        for i, session in enumerate(reversed(st.session_state.history), 1):
+            with st.expander(f"Session {len(st.session_state.history) - i + 1} | {session['start']} → {session['end']}"):
+                st.write(f"**Duration:** {session['duration']}")
+                st.write(f"**Focus Logs:** {len(session['focus_log'])}")
+                st.write(f"**Putts:** {len(session['putt_log'])}")
 
-except Exception as e:
-    st.error(f"❌ Error reading data or calculating score: {e}")
+                if session["focus_log"]:
+                    st.write("Focus Log")
+                    st.dataframe(pd.DataFrame(session["focus_log"]))
 
-# Shutdown button to cleanly stop the board session
-if st.button("Stop EEG Stream and Release"):
-    try:
-        board.stop_stream()
-        board.release_session()
-        st.session_state.clear()
-        st.success("EEG session stopped and released.")
-    except Exception as e:
-        st.error(f"Failed to stop/release board: {e}")
+                if session["putt_log"]:
+                    st.write("Putt Log")
+                    st.dataframe(pd.DataFrame(session["putt_log"]))
+
+        if st.button("🗑️ Clear History"):
+            st.session_state.history = []
+            st.session_state.focus_log = []
+            st.session_state.putt_log = []
+            st.session_state.visible_focus_log = []
+            st.session_state.session_summary = None
+            st.success("Session history cleared.")
+            st.rerun()
+
+
+# --- Navigation ---
+st.sidebar.title("🏌️‍♂️ Navigation")
+selected_page = st.sidebar.radio("Go to", ["Home", "Most Recent Session", "History"])
+
+if selected_page == "Home":
+    home()
+elif selected_page == "Most Recent Session":
+    session_page()
+elif selected_page == "History":
+    history_page()
