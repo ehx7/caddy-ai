@@ -2,150 +2,69 @@ import streamlit as st
 import pandas as pd
 import time
 import matplotlib.pyplot as plt
-
+import numpy as np
 import argparse
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
-import numpy as np
 from brainflow.data_filter import DataFilter, AggOperations
 
 
-# def main():
-BoardShim.enable_dev_board_logger()
+def run_streaming_app():
+    BoardShim.enable_dev_board_logger()
 
-parser = argparse.ArgumentParser()
-# use docs to check which parameters are required for specific board, e.g. for Cyton - set serial port
-parser.add_argument('--timeout', type=int, help='timeout for device discovery or connection', required=False,
-                    default=0)
-parser.add_argument('--ip-port', type=int, help='ip port', required=False, default=0)
-parser.add_argument('--ip-protocol', type=int, help='ip protocol, check IpProtocolType enum', required=False,
-                    default=0)
-parser.add_argument('--ip-address', type=str, help='ip address', required=False, default='')
-parser.add_argument('--serial-port', type=str, help='serial port', required=False, default='')
-parser.add_argument('--mac-address', type=str, help='mac address', required=False, default='')
-parser.add_argument('--other-info', type=str, help='other info', required=False, default='')
-parser.add_argument('--serial-number', type=str, help='serial number', required=False, default='')
-parser.add_argument('--board-id', type=int, help='board id, check docs to get a list of supported boards',
-                    required=False)
-parser.add_argument('--file', type=str, help='file', required=False, default='')
-parser.add_argument('--master-board', type=int, help='master board id for streaming and playback boards',
-                    required=False, default=BoardIds.NO_BOARD)
-args = parser.parse_args()
+    # Set up connection parameters for Cyton
+    params = BrainFlowInputParams()
+    params.serial_port = '/dev/cu.usbserial-D200QSOE'  # <- UPDATE if needed
 
-params = BrainFlowInputParams()
-params.ip_port = args.ip_port
-params.serial_port = args.serial_port
-params.mac_address = args.mac_address
-params.other_info = args.other_info
-params.serial_number = args.serial_number
-params.ip_address = args.ip_address
-params.ip_protocol = args.ip_protocol
-params.timeout = args.timeout
-params.file = args.file
-params.master_board = args.master_board
+    board_id = BoardIds.CYTON_BOARD.value
+    board = BoardShim(board_id, params)
 
-board_id = BoardIds.CYTON_BOARD.value
-print(board_id)
-board = BoardShim(-1, params)
+    try:
+        BoardShim.enable_board_logger()
+        board.prepare_session()
+        board.start_stream()
 
-if 'board' not in st.session_state:
-    st.session_state['board'] = board
+        st.title("Live EEG Streaming: 8 Channel Moving Plots")
+        WINDOW_SIZE = 240  # enough for short display
 
-BoardShim.enable_board_logger()
-st.session_state['board'].prepare_session()
-st.session_state['board'].start_stream()
+        plot_placeholders = [st.empty() for _ in range(8)]
 
-# while True:
+        while True:
+            board_data = board.get_current_board_data(WINDOW_SIZE)
+            eeg_channels = BoardShim.get_eeg_channels(board_id)
 
-time.sleep(1)
-# data = board.get_current_board_data (256) # get latest 256 packages or less, doesnt remove them from internal buffer
-data = st.session_state['board'].get_board_data()  # get all data and remove it from internal buffer
-# board.stop_stream()
-# board.release_session()
+            downsampled_data_list = []
+            for count, channel in enumerate(eeg_channels):
+                if count == 0:
+                    downsampled = DataFilter.perform_downsampling(
+                        board_data[channel], 3, AggOperations.MEDIAN.value)
+                elif count == 1:
+                    downsampled = DataFilter.perform_downsampling(
+                        board_data[channel], 2, AggOperations.MEAN.value)
+                else:
+                    downsampled = DataFilter.perform_downsampling(
+                        board_data[channel], 2, AggOperations.EACH.value)
+                downsampled_data_list.append(downsampled)
 
-##
-eeg_channels = BoardShim.get_eeg_channels(BoardIds.CYTON_BOARD.value)
-df = pd.DataFrame(np.transpose(data))
-df.to_csv('raw_data.csv', index = False)
-print('Data From the Board')
-print(df.head(10))
-print(eeg_channels)
+            min_len = min(len(arr) for arr in downsampled_data_list)
+            trimmed = [arr[:min_len] for arr in downsampled_data_list]
+            Df = pd.DataFrame(np.array(trimmed).T)
 
-downsampled_data_list = []
-for count, channel in enumerate(eeg_channels):
-    print('Original data for channel %d:' % channel)
-    print(data[channel])
-    if count == 0:
-        downsampled_data = DataFilter.perform_downsampling(data[channel], 3, AggOperations.MEDIAN.value)
-    elif count == 1:
-        downsampled_data = DataFilter.perform_downsampling(data[channel], 2, AggOperations.MEAN.value)
-    else:
-        downsampled_data = DataFilter.perform_downsampling(data[channel], 2, AggOperations.EACH.value)
-    downsampled_data_list.append(downsampled_data)
+            for i in range(8):
+                fig, ax = plt.subplots()
+                ax.plot(Df.iloc[:, i])
+                ax.set_title(f"Channel {i + 1}")
+                ax.set_xlabel("Time")
+                ax.set_ylabel("Amplitude")
+                plot_placeholders[i].pyplot(fig)
 
-# Find the minimum length across all downsampled arrays
-min_len = min(len(arr) for arr in downsampled_data_list)
+            time.sleep(1)
 
-# Trim all arrays to this length
-trimmed = [arr[:min_len] for arr in downsampled_data_list]
-
-# Now you can safely convert to a 2D array
-downsampled_data_collection = np.array(trimmed)
-
-# Save to CSV
-df = pd.DataFrame(downsampled_data_collection.T) #.to_csv('downsampled_data.csv', index=False)
-
-st.title("Live Streaming EEG Plot")
-
-## Streamlive
-WINDOW_SIZE = 100  # number of points to show in moving window
-# Placeholder for the plot to update it in place
-plot_placeholder = st.empty()
-
-try:
-    # print('thing')
-    # Keep only last WINDOW_SIZE samples
-    if df.shape[0] > WINDOW_SIZE:
-        df_window = df.tail(WINDOW_SIZE)
-    else:
-        df_window = df
-
-    # Create figure
-    fig, ax = plt.subplots(figsize=(10, 5))
-    for i in range(df_window.shape[1]):
-        ax.plot(df_window.index, df_window.iloc[:, i], label=f'Channel {i+1}')
-    ax.legend(loc='upper right')
-    ax.set_title("EEG Channels (Downsampled) - Moving Window")
-    ax.set_xlabel("Sample Index (time)")
-    ax.set_ylabel("Amplitude")
-
-    # Show plot in Streamlit
-    plot_placeholder.pyplot(fig)
-
-    # Wait before next update
-    time.sleep(1)
-
-except Exception as e:
-    st.write(f"Error loading or plotting data: {e}")
-    time.sleep(2)
-
-# if __name__ == "__main__":
-#     main()
+    except Exception as e:
+        st.error(f"Error occurred: {e}")
+    finally:
+        board.stop_stream()
+        board.release_session()
 
 
-# FIGURES
-
-# sampling_rate = 250
-# num_points = len(df)
-# time_axis = np.arange(num_points) / sampling_rate
-
-# plt.figure(figsize=(12, 10))
-# for i in range(8):  # assuming 8 EEG channels
-#     plt.subplot(8, 1, i + 1)
-#     plt.plot(time_axis, df.iloc[:, i])
-#     plt.title(f'Channel {i + 1}')
-#     plt.xlabel('Time (s)')
-#     plt.ylabel('Amplitude')
-#     plt.tight_layout()
-
-# plt.show()
-
+if __name__ == '__main__':
+    run_streaming_app()
