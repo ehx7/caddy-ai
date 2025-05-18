@@ -11,7 +11,7 @@ st.title("Real-Time EEG Viewer")
 # Load once, or reload each time if CSV is being updated
 @st.cache_data(ttl=1.0)  # update every 1 sec
 def load_data():
-    return pd.read_csv("downsampled_data.csv")
+    return pd.read_csv("/workspaces/caddy-ai/current/downsampled_data.csv")
 
 # Select channel
 channel = st.selectbox("Choose EEG Channel", [f"Channel {i+1}" for i in range(8)])
@@ -35,7 +35,7 @@ for _ in range(100):  # or while True:
     placeholder.pyplot(fig)
     time.sleep(1)
 # 🔧 Set up page and refresh
-st.set_page_config(page_title="Caddy.ai", layout="centered")
+
 st_autorefresh(interval=1000, key="focus_refresh")
 
 # 🧠 Session state setup
