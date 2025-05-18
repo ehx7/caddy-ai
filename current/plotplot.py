@@ -9,6 +9,7 @@ import numpy as np
 from brainflow.data_filter import DataFilter, AggOperations
 
 
+## read data
 def main():
     BoardShim.enable_dev_board_logger()
 
@@ -20,7 +21,7 @@ def main():
     parser.add_argument('--ip-protocol', type=int, help='ip protocol, check IpProtocolType enum', required=False,
                         default=0)
     parser.add_argument('--ip-address', type=str, help='ip address', required=False, default='')
-    parser.add_argument('--serial-port', type=str, help='serial port', required=False, default='')
+    parser.add_argument('--serial-port', type=str, help='serial port', required=False, default='/dev/cu.usbserial-D200QSOE')
     parser.add_argument('--mac-address', type=str, help='mac address', required=False, default='')
     parser.add_argument('--other-info', type=str, help='other info', required=False, default='')
     parser.add_argument('--serial-number', type=str, help='serial number', required=False, default='')
@@ -90,27 +91,9 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-# FIGURES
-
-df = pd.read_csv('downsampled_data.csv')
-sampling_rate = 250
-num_points = len(df)
-time_axis = np.arange(num_points) / sampling_rate
-
-plt.figure(figsize=(12, 10))
-for i in range(8):  # assuming 8 EEG channels
-    plt.subplot(8, 1, i + 1)
-    plt.plot(time_axis, df.iloc[:, i])
-    plt.title(f'Channel {i + 1}')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Amplitude')
-    plt.tight_layout()
-
-plt.show()
-
 st.title("Live Streaming EEG Plot")
 
+## Streamlive
 WINDOW_SIZE = 100  # number of points to show in moving window
 CSV_PATH = "downsampled_data.csv"
 
@@ -131,7 +114,7 @@ while True:
         # Create figure
         fig, ax = plt.subplots(figsize=(10, 5))
         for i in range(df_window.shape[1]):
-            ax.plot(df_window.index, df_window.iloc[:, i], label=f'Channel {i+1}')
+            ax.plot(df_window.index, df_window.iloc[:, i], label=f'Channel {i + 1 }')
         ax.legend(loc='upper right')
         ax.set_title("EEG Channels (Downsampled) - Moving Window")
         ax.set_xlabel("Sample Index (time)")
@@ -146,3 +129,4 @@ while True:
     except Exception as e:
         st.write(f"Error loading or plotting data: {e}")
         time.sleep(2)
+
