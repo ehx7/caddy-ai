@@ -1,19 +1,12 @@
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import serial.tools.list_ports
-import time
 from datetime import datetime
 import pandas as pd
 
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
 from brainflow.data_filter import DataFilter
 from brainflow.ml_model import MLModel, BrainFlowMetrics, BrainFlowClassifiers, BrainFlowModelParams
-
-
-from brainflow.board_shim import BoardShim
-
-print(BoardShim.get_board_descr(BoardShim.CYTON_BOARD))
-
 
 # Serial Port Detection
 def list_serial_ports():
@@ -37,8 +30,8 @@ def setup_board(selected_port):
 def get_mindfulness_score(data, eeg_channels, sampling_rate):
     bands = DataFilter.get_avg_band_powers(data, eeg_channels, sampling_rate, apply_filter=True)
     feature_vector = bands[0]
-    mindfulness_params = BrainFlowModelParams(BrainFlowMetrics.MINDFULNESS.value,
-                                              BrainFlowClassifiers.DEFAULT_CLASSIFIER.value)
+    mindfulness_params = BrainFlowModelParams(BrainFlowMetrics.MINDFULNESS,
+                                              BrainFlowClassifiers.DEFAULT_CLASSIFIER)
     mindfulness = MLModel(mindfulness_params)
     mindfulness.prepare()
     score = mindfulness.predict(feature_vector)
@@ -58,23 +51,41 @@ if not available_ports:
     st.stop()
 
 port_options = [label for _, label in available_ports]
+label_to_port = {label: device for device, label in available_ports}
 selected_label = st.sidebar.selectbox("Select Serial Port", port_options)
-selected_port = dict(available_ports)[selected_label]
-
+selected_port = label_to_port[selected_label]
 st.sidebar.success(f"Using: {selected_port}")
 
-# Initialize session state for scores and timestamps
-if "scores" not in st.session_state:
-    st.session_state.scores = []
-if "timestamps" not in st.session_state:
-    st.session_state.timestamps = []
+# Sidebar header
+with st.sidebar:
+    st.markdown("## 🏌️‍♂️ Caddy")
+    st.markdown("**Caddy.ai – Live Focus Score**")
+    st.markdown("---")
+
+# Initialize session state for board and data if not present
+if "board" not in st.session_state:
+    try:
+        board, board_id, eeg_channels, sampling_rate = setup_board(selected_port)
+        st.session_state.board = board
+        st.session_state.board_id = board_id
+        st.session_state.eeg_channels = eeg_channels
+        st.session_state.sampling_rate = sampling_rate
+        st.session_state.scores = []
+        st.session_state.timestamps = []
+        st.success("EEG board connected successfully!")
+    except Exception as e:
+        st.error(f"Failed to initialize board: {e}")
+        st.stop()
+else:
+    board = st.session_state.board
+    board_id = st.session_state.board_id
+    eeg_channels = st.session_state.eeg_channels
+    sampling_rate = st.session_state.sampling_rate
 
 # Autorefresh every 5 seconds
 st_autorefresh(interval=5000, key="datarefresh")
 
 try:
-    board, board_id, eeg_channels, sampling_rate = setup_board(selected_port)
-
     window_duration = 10  # seconds of data per calculation
     buffer_size = sampling_rate * window_duration
 
@@ -102,9 +113,15 @@ try:
     else:
         st.success("🟢 Focus is stable.")
 
-    # Clean shutdown to prevent port lock (optional)
-    board.stop_stream()
-    board.release_session()
-
 except Exception as e:
-    st.error(f"❌ Error: {e}")
+    st.error(f"❌ Error reading data or calculating score: {e}")
+
+# Shutdown button to cleanly stop the board session
+if st.button("Stop EEG Stream and Release"):
+    try:
+        board.stop_stream()
+        board.release_session()
+        st.session_state.clear()
+        st.success("EEG session stopped and released.")
+    except Exception as e:
+        st.error(f"Failed to stop/release board: {e}")

@@ -215,11 +215,11 @@ else:
 
 # pg.run()
 
-# # sidebar header
-# with st.sidebar:
-#     st.markdown("## 🏌️‍♂️ Caddy")
-#     st.markdown("**Caddy.ai – Live Focus Score**")
-#     st.markdown("---")
+# sidebar header
+with st.sidebar:
+    st.markdown("## 🏌️‍♂️ Caddy")
+    st.markdown("**Caddy.ai – Live Focus Score**")
+    st.markdown("---")
 
 
 # # # x = st.slider("Select a value")
